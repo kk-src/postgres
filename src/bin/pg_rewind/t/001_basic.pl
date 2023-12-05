@@ -91,14 +91,54 @@ sub run_test
 	standby_psql(
 		"INSERT INTO space_tbl VALUES ('in standby, after promotion')");
 
+	my $primary_pgdata = $node_primary->data_dir;
+	my $standby_pgdata = $node_standby->data_dir;
+
+	# Create mock backup_label in both standby and primary
+	# and ensure pg rewind errors
+	$node_primary->create_mock_backup_label;
+	$node_standby->create_mock_backup_label;	
+	command_fails(
+		[
+			'pg_rewind', '--debug',
+			'--source-pgdata', $standby_pgdata,
+			'--target-pgdata', $primary_pgdata,
+			'--no-sync', '--dry-run'
+		],
+		'pg_rewind with unexpected backup_label on primary & standby');
+	
+	# Remove the backup file in primary and check if pg_rewind 
+	# errors because of the backup label in standby.
+	$node_primary->rm_mock_backup_label; 
+	command_fails(
+		[
+			'pg_rewind', '--debug',
+			'--source-pgdata', $standby_pgdata,
+			'--target-pgdata', $primary_pgdata,
+			'--no-sync', '--dry-run'
+		],
+		'pg_rewind with unexpected backup_label on standby');
+	$node_standby->rm_mock_backup_label; 
+
+	# Add back the primary backup_file and confirm the pg_rewind
+	# does not start.
+	$node_primary->create_mock_backup_label;
+	command_fails(
+		[
+			'pg_rewind', '--debug',
+			'--source-pgdata', $standby_pgdata,
+			'--target-pgdata', $primary_pgdata,
+			'--no-sync', '--dry-run'
+		],
+		'pg_rewind with unexpected backup_label on primary');
+	$node_primary->rm_mock_backup_label; 
+	
 	# Before running pg_rewind, do a couple of extra tests with several
 	# option combinations.  As the code paths taken by those tests
 	# do not change for the "local" and "remote" modes, just run them
 	# in "local" mode for simplicity's sake.
 	if ($test_mode eq 'local')
 	{
-		my $primary_pgdata = $node_primary->data_dir;
-		my $standby_pgdata = $node_standby->data_dir;
 
 		# First check that pg_rewind fails if the target cluster is
 		# not stopped as it fails to start up for the forced recovery
@@ -141,7 +181,7 @@ sub run_test
 		# with --dry-run mode.  If anything gets generated in the data
 		# folder, the follow-up run of pg_rewind will most likely fail,
 		# so keep this test as the last one of this subset.
-		$node_standby->stop;
+		$node_standby->stop;		
 		command_ok(
 			[
 				'pg_rewind', '--debug',

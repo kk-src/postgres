@@ -20,7 +20,7 @@ extern void truncate_target_file(const char *path, off_t newsize);
 extern void create_target(file_entry_t *entry);
 extern void remove_target(file_entry_t *entry);
 extern void sync_target_dir(void);
-
+extern bool is_file_present(const char *datadir, const char *path);
 extern char *slurpFile(const char *datadir, const char *path, size_t *filesize);
 
 typedef void (*process_file_callback_t) (const char *path, file_type_t type, size_t size, const char *link_target);
