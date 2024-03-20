@@ -646,21 +646,19 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 				if (!ReadRecord(xlogprefetcher, LOG, false,
 								checkPoint.ThisTimeLineID))
 					ereport(FATAL,
-							(errmsg("could not find redo location referenced by checkpoint record"),
-							 errhint("If you are restoring from a backup, touch \"%s/recovery.signal\" or \"%s/standby.signal\" and add required recovery options.\n"
-									 "If you are not restoring from a backup, try removing the file \"%s/backup_label\".\n"
-									 "Be careful: removing \"%s/backup_label\" will result in a corrupt cluster if restoring from a backup.",
-									 DataDir, DataDir, DataDir, DataDir)));
+							(errcode(ERRCODE_CLUSTER_CORRUPTED),
+							 errmsg("could not find redo location referenced by checkpoint record"),
+							 errhint("If not found, touch \"%s/recovery.signal\" or \"%s/standby.signal\" and add required recovery options.\n",
+									 DataDir, DataDir)));
 			}
 		}
 		else
 		{
 			ereport(FATAL,
-					(errmsg("could not locate required checkpoint record"),
-					 errhint("If you are restoring from a backup, touch \"%s/recovery.signal\" or \"%s/standby.signal\" and add required recovery options.\n"
-							 "If you are not restoring from a backup, try removing the file \"%s/backup_label\".\n"
-							 "Be careful: removing \"%s/backup_label\" will result in a corrupt cluster if restoring from a backup.",
-							 DataDir, DataDir, DataDir, DataDir)));
+					(errcode(ERRCODE_CLUSTER_CORRUPTED),
+					 errmsg("could not locate required checkpoint record"),
+					 errhint("If not found, touch \"%s/recovery.signal\" or \"%s/standby.signal\" and add required recovery options.\n",
+							 DataDir, DataDir)));
 			wasShutdown = false;	/* keep compiler quiet */
 		}
 
@@ -790,7 +788,8 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 			 * simplify processing around checkpoints.
 			 */
 			ereport(PANIC,
-					(errmsg("could not locate a valid checkpoint record")));
+					(errcode(ERRCODE_CLUSTER_CORRUPTED),
+					 errmsg("could not locate a valid checkpoint record")));
 		}
 		memcpy(&checkPoint, XLogRecGetData(xlogreader), sizeof(CheckPoint));
 		wasShutdown = ((record->xl_info & ~XLR_INFO_MASK) == XLOG_CHECKPOINT_SHUTDOWN);
@@ -843,7 +842,8 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		 */
 		switchpoint = tliSwitchPoint(ControlFile->checkPointCopy.ThisTimeLineID, expectedTLEs, NULL);
 		ereport(FATAL,
-				(errmsg("requested timeline %u is not a child of this server's history",
+				(errcode(ERRCODE_TIMELINE_INCONSISTENT),
+				 errmsg("requested timeline %u is not a child of this server's history",
 						recoveryTargetTLI),
 				 errdetail("Latest checkpoint is at %X/%X on timeline %u, but in the history of the requested timeline, the server forked off from that timeline at %X/%X.",
 						   LSN_FORMAT_ARGS(ControlFile->checkPoint),
@@ -859,7 +859,8 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 		tliOfPointInHistory(ControlFile->minRecoveryPoint - 1, expectedTLEs) !=
 		ControlFile->minRecoveryPointTLI)
 		ereport(FATAL,
-				(errmsg("requested timeline %u does not contain minimum recovery point %X/%X on timeline %u",
+				(errcode(ERRCODE_TIMELINE_INCONSISTENT),
+				 errmsg("requested timeline %u does not contain minimum recovery point %X/%X on timeline %u",
 						recoveryTargetTLI,
 						LSN_FORMAT_ARGS(ControlFile->minRecoveryPoint),
 						ControlFile->minRecoveryPointTLI)));
@@ -887,12 +888,14 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 							 checkPoint.newestCommitTsXid)));
 	if (!TransactionIdIsNormal(XidFromFullTransactionId(checkPoint.nextXid)))
 		ereport(PANIC,
-				(errmsg("invalid next transaction ID")));
+				(errcode(ERRCODE_CLUSTER_CORRUPTED),
+				 errmsg("invalid next transaction ID")));
 
 	/* sanity check */
 	if (checkPoint.redo > CheckPointLoc)
 		ereport(PANIC,
-				(errmsg("invalid redo in checkpoint record")));
+				(errcode(ERRCODE_CLUSTER_CORRUPTED),
+				 errmsg("invalid redo in checkpoint record")));
 
 	/*
 	 * Check whether we need to force recovery from WAL.  If it appears to
@@ -903,7 +906,8 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 	{
 		if (wasShutdown)
 			ereport(PANIC,
-					(errmsg("invalid redo record in shutdown checkpoint")));
+					(errcode(ERRCODE_CLUSTER_CORRUPTED),
+					 errmsg("invalid redo record in shutdown checkpoint")));
 		InRecovery = true;
 	}
 	else if (ControlFile->state != DB_SHUTDOWNED)
@@ -979,7 +983,8 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 				if (dbstate_at_startup != DB_IN_ARCHIVE_RECOVERY &&
 					dbstate_at_startup != DB_SHUTDOWNED_IN_RECOVERY)
 					ereport(FATAL,
-							(errmsg("backup_label contains data inconsistent with control file"),
+							(errcode(ERRCODE_CLUSTER_CORRUPTED),
+							 errmsg("backup_label contains data inconsistent with control file"),
 							 errhint("This means that the backup is corrupted and you will "
 									 "have to use another backup for recovery.")));
 				ControlFile->backupEndPoint = ControlFile->minRecoveryPoint;
@@ -1711,7 +1716,8 @@ PerformWalRecovery(void)
 		if (record->xl_rmid != RM_XLOG_ID ||
 			(record->xl_info & ~XLR_INFO_MASK) != XLOG_CHECKPOINT_REDO)
 			ereport(FATAL,
-					(errmsg("unexpected record type found at redo point %X/%X",
+					(errcode(ERRCODE_CLUSTER_CORRUPTED),
+					 errmsg("unexpected record type found at redo point %X/%X",
 							LSN_FORMAT_ARGS(xlogreader->ReadRecPtr))));
 	}
 	else
@@ -1837,7 +1843,8 @@ PerformWalRecovery(void)
 		{
 			if (!reachedConsistency)
 				ereport(FATAL,
-						(errmsg("requested recovery stop point is before consistent recovery point")));
+						(errcode(ERRCODE_DATA_CORRUPTED),
+						 errmsg("requested recovery stop point is before consistent recovery point")));
 
 			/*
 			 * This is the last point where we can restart recovery with a new
@@ -1895,7 +1902,8 @@ PerformWalRecovery(void)
 		recoveryTarget != RECOVERY_TARGET_UNSET &&
 		!reachedRecoveryTarget)
 		ereport(FATAL,
-				(errmsg("recovery ended before configured recovery target was reached")));
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("recovery ended before configured recovery target was reached")));
 }
 
 /*
@@ -2377,7 +2385,8 @@ checkTimeLineSwitch(XLogRecPtr lsn, TimeLineID newTLI, TimeLineID prevTLI,
 	/* Check that the record agrees on what the current (old) timeline is */
 	if (prevTLI != replayTLI)
 		ereport(PANIC,
-				(errmsg("unexpected previous timeline ID %u (current timeline ID %u) in checkpoint record",
+				(errcode(ERRCODE_CLUSTER_CORRUPTED),
+				 errmsg("unexpected previous timeline ID %u (current timeline ID %u) in checkpoint record",
 						prevTLI, replayTLI)));
 
 	/*
@@ -2386,7 +2395,8 @@ checkTimeLineSwitch(XLogRecPtr lsn, TimeLineID newTLI, TimeLineID prevTLI,
 	 */
 	if (newTLI < replayTLI || !tliInHistory(newTLI, expectedTLEs))
 		ereport(PANIC,
-				(errmsg("unexpected timeline ID %u (after %u) in checkpoint record",
+				(errcode(ERRCODE_CLUSTER_CORRUPTED),
+				 errmsg("unexpected timeline ID %u (after %u) in checkpoint record",
 						newTLI, replayTLI)));
 
 	/*
@@ -2402,7 +2412,8 @@ checkTimeLineSwitch(XLogRecPtr lsn, TimeLineID newTLI, TimeLineID prevTLI,
 		lsn < minRecoveryPoint &&
 		newTLI > minRecoveryPointTLI)
 		ereport(PANIC,
-				(errmsg("unexpected timeline ID %u in checkpoint record, before reaching minimum recovery point %X/%X on timeline %u",
+				(errcode(ERRCODE_CLUSTER_CORRUPTED),
+				 errmsg("unexpected timeline ID %u in checkpoint record, before reaching minimum recovery point %X/%X on timeline %u",
 						newTLI,
 						LSN_FORMAT_ARGS(minRecoveryPoint),
 						minRecoveryPointTLI)));
