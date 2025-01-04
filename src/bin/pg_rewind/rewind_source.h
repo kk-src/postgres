@@ -23,6 +23,11 @@
 typedef struct rewind_source
 {
 	/*
+	 * Check if a file is present. Return true if present, false otherwise.
+	 */
+	bool		(*is_file_present) (struct rewind_source *, const char *path);
+
+	/*
 	 * Traverse all files in the source data directory, and call 'callback' on
 	 * each file.
 	 */
