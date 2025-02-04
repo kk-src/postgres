@@ -68,6 +68,7 @@
 %token K_DROP_REPLICATION_SLOT
 %token K_ALTER_REPLICATION_SLOT
 %token K_TIMELINE_HISTORY
+%token K_NBLOCKS
 %token K_WAIT
 %token K_TIMELINE
 %token K_PHYSICAL
@@ -85,7 +86,7 @@
 %type <node>	base_backup start_replication start_logical_replication
 				create_replication_slot drop_replication_slot
 				alter_replication_slot identify_system read_replication_slot
-				timeline_history show upload_manifest
+				timeline_history nblocks show upload_manifest
 %type <list>	generic_option_list
 %type <defelt>	generic_option
 %type <uintval>	opt_timeline
@@ -121,6 +122,7 @@ command:
 			| alter_replication_slot
 			| read_replication_slot
 			| timeline_history
+			| nblocks
 			| show
 			| upload_manifest
 			;
@@ -308,6 +310,24 @@ start_logical_replication:
 					$$ = (Node *) cmd;
 				}
 			;
+
+
+/*
+ * NBLOCKS d %lu %lu %lu
+ */
+nblocks:
+			K_NBLOCKS UCONST UCONST UCONST UCONST
+				{
+					NBlocksCmd *cmd;
+					cmd = makeNode(NBlocksCmd);					
+					cmd->forknum = $2;
+					cmd->dbOid = $3;
+					cmd->spcOid = $4;
+					cmd->relOid = $5;
+					$$ = (Node *) cmd;
+				}
+			;
+
 /*
  * TIMELINE_HISTORY %u
  */

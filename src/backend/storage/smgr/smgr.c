@@ -59,6 +59,7 @@
 #include "storage/smgr.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
+#include "fmgr.h"
 
 
 /*
@@ -104,33 +105,22 @@ typedef struct f_smgr
 								  BlockNumber old_blocks, BlockNumber nblocks);
 	void		(*smgr_immedsync) (SMgrRelation reln, ForkNumber forknum);
 	void		(*smgr_registersync) (SMgrRelation reln, ForkNumber forknum);
+	int         (*smgr_syncfiletag) (const FileTag *ftag, char *path);
+	int         (*smgr_unlinkfiletag)(const FileTag *ftag, char *path);
+	bool        (*smgr_filetagmatches)(const FileTag *ftag, const FileTag *candidate);
 } f_smgr;
 
-static const f_smgr smgrsw[] = {
-	/* magnetic disk */
-	{
-		.smgr_init = mdinit,
-		.smgr_shutdown = NULL,
-		.smgr_open = mdopen,
-		.smgr_close = mdclose,
-		.smgr_create = mdcreate,
-		.smgr_exists = mdexists,
-		.smgr_unlink = mdunlink,
-		.smgr_extend = mdextend,
-		.smgr_zeroextend = mdzeroextend,
-		.smgr_prefetch = mdprefetch,
-		.smgr_maxcombine = mdmaxcombine,
-		.smgr_readv = mdreadv,
-		.smgr_writev = mdwritev,
-		.smgr_writeback = mdwriteback,
-		.smgr_nblocks = mdnblocks,
-		.smgr_truncate = mdtruncate,
-		.smgr_immedsync = mdimmedsync,
-		.smgr_registersync = mdregistersync,
-	}
-};
 
-static const int NSmgr = lengthof(smgrsw);
+char *SMgr = "md"; // default value
+
+const char *
+show_smgr(void)
+{
+	if (SMgr)
+		return SMgr;
+	else
+		return "(Empty)";
+}
 
 /*
  * Each backend has a hashtable that stores all extant SMgrRelation objects.
@@ -143,7 +133,101 @@ static dlist_head unpinned_relns;
 /* local function prototypes */
 static void smgrshutdown(int code, Datum arg);
 static void smgrdestroy(SMgrRelation reln);
+void *smgr_ldassign_void(char *fn, char *dl, bool optional);
+static f_smgr smgrsw[1];
 
+
+int smgrsyncfiletag(const FileTag *ftag, char *path);
+int smgrunlinkfiletag(const FileTag *ftag, char *path); 
+bool smgrfiletagmatches(const FileTag *ftag, const FileTag *candidate);
+
+int smgrsyncfiletag(const FileTag *ftag, char *path) 
+{
+	return smgrsw[0].smgr_syncfiletag(ftag, path);
+}
+
+int smgrunlinkfiletag(const FileTag *ftag, char *path) 
+{
+	return smgrsw[0].smgr_unlinkfiletag(ftag, path);
+}
+
+bool smgrfiletagmatches(const FileTag *ftag, const FileTag *candidate) 
+{
+	return smgrsw[0].smgr_filetagmatches(ftag, candidate);
+}
+
+
+void *smgr_ldassign_void(char *fn, char *dl, bool optional)
+{
+	char smgr_func[256];	
+	void (*func)(void);
+	pg_sprintf(smgr_func, "%s%s", SMgr, fn);	
+	func = load_external_function(dl, smgr_func, true, NULL);
+	if (func == NULL && !optional) {
+		elog(PANIC, "Could not find init function %s.", smgr_func);
+		return NULL;
+	}
+	return func;
+}
+
+/*
+ * DropRelationFiles -- drop files of all given relations
+ */
+void
+DropRelationFiles(RelFileLocator *delrels, int ndelrels, bool isRedo)
+{
+	SMgrRelation *srels;
+	int			i;
+
+	srels = palloc(sizeof(SMgrRelation) * ndelrels);
+	for (i = 0; i < ndelrels; i++)
+	{
+		SMgrRelation srel = smgropen(delrels[i], INVALID_PROC_NUMBER);
+
+		if (isRedo)
+		{
+			ForkNumber	fork;
+
+			for (fork = 0; fork <= MAX_FORKNUM; fork++)
+				XLogDropRelation(delrels[i], fork);
+		}
+		srels[i] = srel;
+	}
+
+	smgrdounlinkall(srels, ndelrels, isRedo);
+
+	for (i = 0; i < ndelrels; i++)
+		smgrclose(srels[i]);
+	pfree(srels);
+}
+
+/* Populate a file tag describing an md.c segment file. */
+#define INIT_SMGR_FILETAG(a,xx_rlocator,xx_forknum,xx_segno) \
+( \
+	memset(&(a), 0, sizeof(FileTag)), \
+	(a).handler = SYNC_HANDLER_MD, \
+	(a).rlocator = (xx_rlocator), \
+	(a).forknum = (xx_forknum), \
+	(a).segno = (xx_segno) \
+)
+
+/*
+ * ForgetDatabaseSyncRequests -- forget any fsyncs and unlinks for a DB
+ */
+void
+ForgetDatabaseSyncRequests(Oid dbid)
+{
+	FileTag		tag;
+	RelFileLocator rlocator;
+
+	rlocator.dbOid = dbid;
+	rlocator.spcOid = 0;
+	rlocator.relNumber = 0;
+
+	INIT_SMGR_FILETAG(tag, rlocator, InvalidForkNumber, InvalidBlockNumber);
+
+	RegisterSyncRequest(&tag, SYNC_FILTER_REQUEST, true /* retryOnError */ );
+}
 
 /*
  * smgrinit(), smgrshutdown() -- Initialize or shut down storage
@@ -155,15 +239,39 @@ static void smgrdestroy(SMgrRelation reln);
  */
 void
 smgrinit(void)
-{
-	int			i;
+{	
+	char smgr_dl[256];	
+	
+	memset(smgr_dl, 0, 256);	
+	// UNDONE: add string check to avoid overflows.
+	pg_sprintf(smgr_dl, "lib%s-smgr.so", SMgr);
 
-	for (i = 0; i < NSmgr; i++)
-	{
-		if (smgrsw[i].smgr_init)
-			smgrsw[i].smgr_init();
+	smgrsw[0].smgr_init = smgr_ldassign_void("init", smgr_dl, true);
+	//smgrsw[0].smgr_shutdown = smgr_ldassign_void("shutdown", smgr_dl, true);
+	smgrsw[0].smgr_open = smgr_ldassign_void("open", smgr_dl, false);
+	smgrsw[0].smgr_close = smgr_ldassign_void("close", smgr_dl, false);
+	smgrsw[0].smgr_create = smgr_ldassign_void("create", smgr_dl, false);
+	smgrsw[0].smgr_exists = smgr_ldassign_void("exists", smgr_dl, false);
+	smgrsw[0].smgr_unlink = smgr_ldassign_void("unlink", smgr_dl, false);
+	smgrsw[0].smgr_extend = smgr_ldassign_void("extend", smgr_dl, false);
+	smgrsw[0].smgr_zeroextend = smgr_ldassign_void("zeroextend", smgr_dl, false);
+	smgrsw[0].smgr_prefetch = smgr_ldassign_void("prefetch", smgr_dl, false);
+	smgrsw[0].smgr_maxcombine = smgr_ldassign_void("maxcombine", smgr_dl, false);
+	smgrsw[0].smgr_readv = smgr_ldassign_void("readv", smgr_dl, false);
+	smgrsw[0].smgr_writev = smgr_ldassign_void("writev", smgr_dl, false);
+	smgrsw[0].smgr_writeback = smgr_ldassign_void("writeback", smgr_dl, false);
+	smgrsw[0].smgr_nblocks = smgr_ldassign_void("nblocks", smgr_dl, false);
+	smgrsw[0].smgr_truncate = smgr_ldassign_void("truncate", smgr_dl, false);
+	smgrsw[0].smgr_immedsync = smgr_ldassign_void("immedsync", smgr_dl, false);
+	smgrsw[0].smgr_registersync = smgr_ldassign_void("registersync", smgr_dl, false);
+	smgrsw[0].smgr_syncfiletag = smgr_ldassign_void("syncfiletag", smgr_dl, false);
+	smgrsw[0].smgr_unlinkfiletag = smgr_ldassign_void("unlinkfiletag", smgr_dl, false);
+	smgrsw[0].smgr_filetagmatches = smgr_ldassign_void("filetagmatches", smgr_dl, false);
+
+	if (smgrsw[0].smgr_init != NULL) {
+		smgrsw[0].smgr_init();
 	}
-
+	
 	/* register the shutdown proc */
 	on_proc_exit(smgrshutdown, 0);
 }
@@ -174,13 +282,10 @@ smgrinit(void)
 static void
 smgrshutdown(int code, Datum arg)
 {
-	int			i;
 
-	for (i = 0; i < NSmgr; i++)
-	{
-		if (smgrsw[i].smgr_shutdown)
-			smgrsw[i].smgr_shutdown();
-	}
+	if (smgrsw[0].smgr_shutdown)
+			smgrsw[0].smgr_shutdown();
+	
 }
 
 /*
@@ -680,10 +785,15 @@ smgrnblocks(SMgrRelation reln, ForkNumber forknum)
 
 	/* Check and return if we get the cached value for the number of blocks. */
 	result = smgrnblocks_cached(reln, forknum);
+	
 	if (result != InvalidBlockNumber)
 		return result;
 
 	result = smgrsw[reln->smgr_which].smgr_nblocks(reln, forknum);
+
+	if (InRecovery) {
+		ereport(LOG, errmsg("Got blocks from local smgr at: %d", result));
+	}
 
 	reln->smgr_cached_nblocks[forknum] = result;
 

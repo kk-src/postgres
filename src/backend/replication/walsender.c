@@ -549,6 +549,53 @@ ReadReplicationSlot(ReadReplicationSlotCmd *cmd)
 	end_tup_output(tstate);
 }
 
+#include "utils/relfilenumbermap.h"
+
+Relation try_relation_open(Oid relationId, LOCKMODE lockmode);
+void relation_close(Relation relation, LOCKMODE lockmode);
+BlockNumber RelationGetNumberOfBlocksInFork(Relation relation, ForkNumber forkNum);
+
+
+static void
+SendNBlocks(NBlocksCmd *cmd)
+{	
+	Relation	rel = NULL;
+	BlockNumber nblocks;
+	StringInfoData buf;	
+	Size		len;
+	DestReceiver *dest;
+	TupleDesc	tupdesc;
+	char nblocks_str[64];
+
+	ereport(LOG, errmsg("SendNblocks: %d, %d, %d", cmd->spcOid, cmd->relOid, cmd->dbOid));
+	ereport(LOG, errmsg("SendNblocks: Got reloid: %d", cmd->relOid));
+
+	StartTransactionCommand();
+	rel = try_relation_open(cmd->relOid, AccessShareLock);	
+	nblocks = RelationGetNumberOfBlocksInFork(rel, cmd->forknum);
+	if (rel)
+	{
+		relation_close(rel, AccessShareLock);	
+	}
+	CommitTransactionCommand();
+
+	ereport(LOG, errmsg("Got nblocks in SendNblocks in primary as: %d", nblocks));
+
+	dest = CreateDestReceiver(DestRemoteSimple);
+	tupdesc = CreateTemplateTupleDesc(1);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "nblocks", TEXTOID, -1, 0);
+
+	dest->rStartup(dest, CMD_SELECT, tupdesc);
+
+	pq_beginmessage(&buf, PqMsg_DataRow);
+	pq_sendint16(&buf, 1);		/* # of columns */
+	len = sprintf(nblocks_str, "%d", nblocks);
+	pq_sendint32(&buf, len);	/* col1 len */
+	pq_sendbytes(&buf, nblocks_str, len);
+	pq_endmessage(&buf);
+
+	ereport(LOG, errmsg("Send complete."));
+}
 
 /*
  * Handle TIMELINE_HISTORY command.
@@ -2132,6 +2179,15 @@ exec_replication_command(const char *cmd_string)
 			SendTimeLineHistory((TimeLineHistoryCmd *) cmd_node);
 			EndReplicationCommand(cmdtag);
 			break;
+
+		case T_NBlocksCmd:
+			cmdtag = "NBLOCKS";
+			set_ps_display(cmdtag);
+			PreventInTransactionBlock(true, cmdtag);
+			SendNBlocks((NBlocksCmd *) cmd_node);
+			EndReplicationCommand(cmdtag);
+			break;
+
 
 		case T_VariableShowStmt:
 			{

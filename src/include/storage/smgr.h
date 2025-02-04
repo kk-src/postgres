@@ -17,6 +17,7 @@
 #include "lib/ilist.h"
 #include "storage/block.h"
 #include "storage/relfilelocator.h"
+#include "storage/sync.h"
 
 /*
  * smgr.c maintains a table of SMgrRelation objects, which are essentially
@@ -108,10 +109,20 @@ extern BlockNumber smgrnblocks_cached(SMgrRelation reln, ForkNumber forknum);
 extern void smgrtruncate(SMgrRelation reln, ForkNumber *forknum, int nforks,
 						 BlockNumber *old_nblocks,
 						 BlockNumber *nblocks);
+extern int smgrsyncfiletag(const FileTag *ftag, char *path);
+extern int smgrunlinkfiletag(const FileTag *ftag, char *path);
+extern bool smgrfiletagmatches(const FileTag *ftag, const FileTag *candidate);
+
 extern void smgrimmedsync(SMgrRelation reln, ForkNumber forknum);
 extern void smgrregistersync(SMgrRelation reln, ForkNumber forknum);
 extern void AtEOXact_SMgr(void);
 extern bool ProcessBarrierSmgrRelease(void);
+extern const char *show_smgr(void);
+extern char *SMgr;
+#ifndef WIN32
+#include <dlfcn.h>
+#endif							/* !WIN32 */
+
 
 static inline void
 smgrread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,

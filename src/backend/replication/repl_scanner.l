@@ -133,6 +133,7 @@ CREATE_REPLICATION_SLOT		{ return K_CREATE_REPLICATION_SLOT; }
 DROP_REPLICATION_SLOT		{ return K_DROP_REPLICATION_SLOT; }
 ALTER_REPLICATION_SLOT		{ return K_ALTER_REPLICATION_SLOT; }
 TIMELINE_HISTORY	{ return K_TIMELINE_HISTORY; }
+NBLOCKS             {return K_NBLOCKS; }     
 PHYSICAL			{ return K_PHYSICAL; }
 RESERVE_WAL			{ return K_RESERVE_WAL; }
 LOGICAL				{ return K_LOGICAL; }
@@ -311,6 +312,7 @@ replication_scanner_is_replication_command(yyscan_t yyscanner)
 		case K_ALTER_REPLICATION_SLOT:
 		case K_READ_REPLICATION_SLOT:
 		case K_TIMELINE_HISTORY:
+		case K_NBLOCKS:
 		case K_UPLOAD_MANIFEST:
 		case K_SHOW:
 			/* Yes; push back the first token so we can parse later. */

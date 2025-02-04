@@ -4042,7 +4042,15 @@ struct config_string ConfigureNamesString[] =
 		"",
 		NULL, NULL, show_archive_command
 	},
-
+	{
+		{"SMgr", PGC_SIGHUP, SMGR,
+			gettext_noop("Sets the storage manager that is opted in to handle storage."),
+			gettext_noop("The library will be of the format \"lib<smgr_name>_smgr.so\". Example for md, it will be libmd_smgr.so.")
+		},
+		&SMgr,
+		"md",
+		NULL, NULL, show_smgr
+	},
 	{
 		{"archive_library", PGC_SIGHUP, WAL_ARCHIVING,
 			gettext_noop("Sets the library that will be called to archive a WAL file."),

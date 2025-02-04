@@ -310,6 +310,12 @@ typedef void (*walrcv_readtimelinehistoryfile_fn) (WalReceiverConn *conn,
 												   char **content,
 												   int *size);
 
+typedef void (*walrcv_nblocks_fn)(WalReceiverConn *conn,
+								 SMgrRelation reln, ForkNumber forknum,
+								 BlockNumber *blocks);
+
+
+
 /*
  * walrcv_startstreaming_fn
  *
@@ -419,6 +425,7 @@ typedef struct WalReceiverFunctionsType
 	walrcv_get_dbname_from_conninfo_fn walrcv_get_dbname_from_conninfo;
 	walrcv_server_version_fn walrcv_server_version;
 	walrcv_readtimelinehistoryfile_fn walrcv_readtimelinehistoryfile;
+	walrcv_nblocks_fn walrcv_nblocks;
 	walrcv_startstreaming_fn walrcv_startstreaming;
 	walrcv_endstreaming_fn walrcv_endstreaming;
 	walrcv_receive_fn walrcv_receive;
@@ -448,6 +455,8 @@ extern PGDLLIMPORT WalReceiverFunctionsType *WalReceiverFunctions;
 	WalReceiverFunctions->walrcv_server_version(conn)
 #define walrcv_readtimelinehistoryfile(conn, tli, filename, content, size) \
 	WalReceiverFunctions->walrcv_readtimelinehistoryfile(conn, tli, filename, content, size)
+#define walrcv_nblocks(conn, reln, forknum, blocks) \
+	WalReceiverFunctions->walrcv_nblocks(conn, reln, forknum, blocks)
 #define walrcv_startstreaming(conn, options) \
 	WalReceiverFunctions->walrcv_startstreaming(conn, options)
 #define walrcv_endstreaming(conn, next_tli) \

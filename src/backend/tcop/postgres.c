@@ -3299,7 +3299,7 @@ ProcessInterrupts(void)
 					 errmsg("terminating logical replication worker due to administrator command")));
 		else if (IsLogicalLauncher())
 		{
-			ereport(DEBUG1,
+			ereport(LOG,
 					(errmsg_internal("logical replication launcher shutting down")));
 
 			/*

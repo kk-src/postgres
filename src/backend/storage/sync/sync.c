@@ -95,9 +95,9 @@ typedef struct SyncOps
 static const SyncOps syncsw[] = {
 	/* magnetic disk */
 	[SYNC_HANDLER_MD] = {
-		.sync_syncfiletag = mdsyncfiletag,
-		.sync_unlinkfiletag = mdunlinkfiletag,
-		.sync_filetagmatches = mdfiletagmatches
+		.sync_syncfiletag = smgrsyncfiletag,
+		.sync_unlinkfiletag = smgrunlinkfiletag,
+		.sync_filetagmatches = smgrfiletagmatches
 	},
 	/* pg_xact */
 	[SYNC_HANDLER_CLOG] = {

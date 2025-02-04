@@ -38,6 +38,9 @@
 #include "storage/smgr.h"
 #include "storage/sync.h"
 #include "utils/memutils.h"
+#include "replication/walreceiver.h"
+
+PG_MODULE_MAGIC;
 
 /*
  * The magnetic disk storage manager keeps track of open file
@@ -83,7 +86,7 @@ typedef struct _MdfdVec
 	BlockNumber mdfd_segno;		/* segment number, from 0 */
 } MdfdVec;
 
-static MemoryContext MdCxt;		/* context for all MdfdVec objects */
+MemoryContext MdCxt;		/* context for all MdfdVec objects */
 
 
 /* Populate a file tag describing an md.c segment file. */
@@ -148,7 +151,7 @@ _mdfd_open_flags(void)
  */
 void
 mdinit(void)
-{
+{	
 	MdCxt = AllocSetContextCreate(TopMemoryContext,
 								  "MdSmgr",
 								  ALLOCSET_DEFAULT_SIZES);
@@ -1104,6 +1107,31 @@ mdnblocks(SMgrRelation reln, ForkNumber forknum)
 	MdfdVec    *v;
 	BlockNumber nblocks;
 	BlockNumber segno;
+	BlockNumber blocks;
+
+	if (InRecovery) { //If in recover, pull it from remote		
+		static WalReceiverConn *wrconn = NULL;
+		char conninfo[MAXCONNINFO];
+		char *err;
+		char *appname = "replica";
+
+		/* Load the library providing us libpq calls. */
+		load_file("libpqwalreceiver", false);
+		//ereport(LOG,  (errmsg("Fetch blocks from primary.")));		
+		strlcpy(conninfo, "host=127.0.0.1 port=5432 dbname=postgres", MAXCONNINFO);
+		//ereport(LOG,  (errmsg("about to connect: %s", conninfo)));
+		wrconn = walrcv_connect(conninfo, true, true, false, appname, &err);
+		if (!wrconn)
+			ereport(ERROR,
+				(errcode(ERRCODE_CONNECTION_FAILURE),
+				 errmsg("streaming replication receiver \"%s\" could not connect to the primary server: %s",
+						appname, err)));
+		//ereport(LOG,  (errmsg("Connected")));
+		walrcv_nblocks(wrconn, reln, forknum, &blocks);
+		walrcv_disconnect(wrconn);
+		ereport(LOG, errmsg("Got blocks from remote(primary) as: %d", blocks));
+	}
+	
 
 	mdopenfork(reln, forknum, EXTENSION_FAIL);
 
@@ -1149,7 +1177,7 @@ mdnblocks(SMgrRelation reln, ForkNumber forknum)
 		v = _mdfd_openseg(reln, forknum, segno, 0);
 		if (v == NULL)
 			return segno * ((BlockNumber) RELSEG_SIZE);
-	}
+	}	
 }
 
 /*
@@ -1434,55 +1462,6 @@ register_forget_request(RelFileLocatorBackend rlocator, ForkNumber forknum,
 	INIT_MD_FILETAG(tag, rlocator.locator, forknum, segno);
 
 	RegisterSyncRequest(&tag, SYNC_FORGET_REQUEST, true /* retryOnError */ );
-}
-
-/*
- * ForgetDatabaseSyncRequests -- forget any fsyncs and unlinks for a DB
- */
-void
-ForgetDatabaseSyncRequests(Oid dbid)
-{
-	FileTag		tag;
-	RelFileLocator rlocator;
-
-	rlocator.dbOid = dbid;
-	rlocator.spcOid = 0;
-	rlocator.relNumber = 0;
-
-	INIT_MD_FILETAG(tag, rlocator, InvalidForkNumber, InvalidBlockNumber);
-
-	RegisterSyncRequest(&tag, SYNC_FILTER_REQUEST, true /* retryOnError */ );
-}
-
-/*
- * DropRelationFiles -- drop files of all given relations
- */
-void
-DropRelationFiles(RelFileLocator *delrels, int ndelrels, bool isRedo)
-{
-	SMgrRelation *srels;
-	int			i;
-
-	srels = palloc(sizeof(SMgrRelation) * ndelrels);
-	for (i = 0; i < ndelrels; i++)
-	{
-		SMgrRelation srel = smgropen(delrels[i], INVALID_PROC_NUMBER);
-
-		if (isRedo)
-		{
-			ForkNumber	fork;
-
-			for (fork = 0; fork <= MAX_FORKNUM; fork++)
-				XLogDropRelation(delrels[i], fork);
-		}
-		srels[i] = srel;
-	}
-
-	smgrdounlinkall(srels, ndelrels, isRedo);
-
-	for (i = 0; i < ndelrels; i++)
-		smgrclose(srels[i]);
-	pfree(srels);
 }
 
 

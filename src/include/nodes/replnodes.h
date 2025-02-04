@@ -120,6 +120,18 @@ typedef struct TimeLineHistoryCmd
 	TimeLineID	timeline;
 } TimeLineHistoryCmd;
 
+#include "common/relpath.h"
+
+typedef struct NBlocksCmd
+{
+	NodeTag type;
+	ForkNumber forknum;
+	Oid dbOid;
+	Oid spcOid;
+	Oid relOid;
+} NBlocksCmd;
+
+
 /* ----------------------
  *		UPLOAD_MANIFEST command
  * ----------------------

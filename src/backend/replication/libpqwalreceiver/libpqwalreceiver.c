@@ -62,6 +62,10 @@ static char *libpqrcv_identify_system(WalReceiverConn *conn,
 									  TimeLineID *primary_tli);
 static char *libpqrcv_get_dbname_from_conninfo(const char *connInfo);
 static int	libpqrcv_server_version(WalReceiverConn *conn);
+
+static void libpqrcv_nblocks(WalReceiverConn *conn,
+								 SMgrRelation reln, ForkNumber forknum,
+								 BlockNumber *blocks);
 static void libpqrcv_readtimelinehistoryfile(WalReceiverConn *conn,
 											 TimeLineID tli, char **filename,
 											 char **content, int *len);
@@ -97,6 +101,7 @@ static WalReceiverFunctionsType PQWalReceiverFunctions = {
 	.walrcv_identify_system = libpqrcv_identify_system,
 	.walrcv_server_version = libpqrcv_server_version,
 	.walrcv_readtimelinehistoryfile = libpqrcv_readtimelinehistoryfile,
+	.walrcv_nblocks = libpqrcv_nblocks, 
 	.walrcv_startstreaming = libpqrcv_startstreaming,
 	.walrcv_endstreaming = libpqrcv_endstreaming,
 	.walrcv_receive = libpqrcv_receive,
@@ -725,6 +730,57 @@ libpqrcv_endstreaming(WalReceiverConn *conn, TimeLineID *next_tli)
 				 errmsg("unexpected result after CommandComplete: %s",
 						pchomp(PQerrorMessage(conn->streamConn)))));
 }
+
+
+static void
+libpqrcv_nblocks(WalReceiverConn *conn,
+								 SMgrRelation reln, ForkNumber forknum,
+								 BlockNumber *blocks)
+{
+	PGresult   *res;
+	char		cmd[64];
+	char    *blocks_str;
+	int			ntuples;
+	int			nfields;
+
+	
+	snprintf(cmd, sizeof(cmd), "NBLOCKS %d %u %u %u", forknum, reln->smgr_rlocator.locator.dbOid,
+												 reln->smgr_rlocator.locator.spcOid,
+												 reln->smgr_rlocator.locator.relNumber);
+	res = libpqrcv_PQexec(conn->streamConn, cmd);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		PQclear(res);
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("could not receive nblocks from "
+						"the primary server: %s",
+						pchomp(PQerrorMessage(conn->streamConn)))));
+	}
+	if (PQnfields(res) != 1 || PQntuples(res) != 1)
+	{
+		ntuples = PQntuples(res);
+		nfields = PQnfields(res);
+
+		PQclear(res);
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid response from primary server"),
+				 errdetail("Expected 1 tuple with 2 fields, got %d tuples with %d fields.",
+						   ntuples, nfields)));
+	}
+
+	blocks_str = pstrdup(PQgetvalue(res, 0, 0));
+
+	if (sscanf(blocks_str, "%d", blocks) != 1) {
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid response from sscanf"),
+				 errdetail("%s", blocks_str)));
+    }
+	PQclear(res);
+}
+
 
 /*
  * Fetch the timeline history file for 'tli' from primary.
