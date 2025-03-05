@@ -23,6 +23,7 @@ typedef struct
 	const char *datadir;		/* path to the source data directory */
 } local_source;
 
+static bool local_is_file_present(rewind_source *source, const char *path);
 static void local_traverse_files(rewind_source *source,
 								 process_file_callback_t callback);
 static char *local_fetch_file(rewind_source *source, const char *path,
@@ -41,6 +42,7 @@ init_local_source(const char *datadir)
 
 	src = pg_malloc0(sizeof(local_source));
 
+	src->common.is_file_present = local_is_file_present;
 	src->common.traverse_files = local_traverse_files;
 	src->common.fetch_file = local_fetch_file;
 	src->common.queue_fetch_file = local_queue_fetch_file;
@@ -58,6 +60,18 @@ static void
 local_traverse_files(rewind_source *source, process_file_callback_t callback)
 {
 	traverse_datadir(((local_source *) source)->datadir, callback);
+}
+
+/*
+ * Check if a file is present. It calls the file_ops is_file_present
+ * to check.
+ */
+static bool
+local_is_file_present(rewind_source *source, const char *path)
+{
+	const char *datadir = ((local_source *) source)->datadir;
+
+	return is_file_present(datadir, path);
 }
 
 static char *
