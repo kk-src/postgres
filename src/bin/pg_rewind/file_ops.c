@@ -299,6 +299,23 @@ sync_target_dir(void)
 	sync_pgdata(datadir_target, PG_VERSION_NUM, sync_method, true);
 }
 
+/*
+ * Check if a file is present using the stat function. Return 'true'
+ * if present and 'false' if not.
+ */
+bool
+is_file_present(const char *datadir, const char *path)
+{
+	struct stat s;
+	char		fullpath[MAXPGPATH];
+
+	snprintf(fullpath, sizeof(fullpath), "%s/%s", datadir, path);
+
+	if (stat(fullpath, &s) < 0)
+		return false;
+
+	return true;
+}
 
 /*
  * Read a file into memory. The file to be read is <datadir>/<path>.
