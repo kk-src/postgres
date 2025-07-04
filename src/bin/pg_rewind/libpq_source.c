@@ -60,6 +60,7 @@ static void appendArrayEscapedString(StringInfo buf, const char *str);
 static void process_queued_fetch_requests(libpq_source *src);
 
 /* public interface functions */
+static bool libpq_is_file_present(rewind_source *source, const char *path);
 static void libpq_traverse_files(rewind_source *source,
 								 process_file_callback_t callback);
 static void libpq_queue_fetch_file(rewind_source *source, const char *path, size_t len);
@@ -86,6 +87,7 @@ init_libpq_source(PGconn *conn)
 
 	src = pg_malloc0(sizeof(libpq_source));
 
+	src->common.is_file_present = libpq_is_file_present;
 	src->common.traverse_files = libpq_traverse_files;
 	src->common.fetch_file = libpq_fetch_file;
 	src->common.queue_fetch_file = libpq_queue_fetch_file;
@@ -625,6 +627,26 @@ appendArrayEscapedString(StringInfo buf, const char *str)
 		str++;
 	}
 	appendStringInfoCharMacro(buf, '\"');
+}
+
+/*
+ * Check if a file is present using the connection to the
+ * database.
+ */
+static bool
+libpq_is_file_present(rewind_source *source, const char *path)
+{
+	PGconn	   *conn = ((libpq_source *) source)->conn;
+	PGresult   *res;
+	const char *paramValues[1];
+
+	paramValues[0] = path;
+	res = PQexecParams(conn, "SELECT pg_stat_file($1)",
+					   1, NULL, paramValues, NULL, NULL, 1);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		return false;
+
+	return true;
 }
 
 /*
