@@ -3718,6 +3718,37 @@ sub pg_recvlogical_upto
 
 =pod
 
+=item $node->create_mock_backup_label(self)
+
+Create a mock backup_label file to simulate a real life scenario
+where pg_rewind is attempted on a cluster with backup_label.
+
+=cut
+
+sub create_mock_backup_label
+{
+	my ($self) = @_;
+	my $label_file = $self->data_dir . "/backup_label";
+	system("touch $label_file")
+}
+
+=pod
+
+=item $node->create_mock_backup_label(self)
+
+Remove the mock backup_label file from the cluster.
+
+=cut
+
+sub rm_mock_backup_label
+{
+	my ($self) = @_;
+	my $label_file = $self->data_dir . "/backup_label";
+	unlink($label_file)
+}
+
+=pod
+
 =item $node->corrupt_page_checksum(self, file, page_offset)
 
 Intentionally corrupt the checksum field of one page in a file.
