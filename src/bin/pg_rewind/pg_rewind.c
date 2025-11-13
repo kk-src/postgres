@@ -741,7 +741,11 @@ perform_rewind(filemap_t *filemap, rewind_source *source,
 static void
 sanityChecks(void)
 {
-	/* TODO Check that there's no backup_label in either cluster */
+	if (source->is_file_present(source, "backup_label"))
+		pg_fatal("The backup_label file is present in source cluster");
+
+	if (is_file_present(datadir_target, "backup_label"))
+		pg_fatal("The backup_label file is present in target  cluster");
 
 	/* Check system_identifier match */
 	if (ControlFile_target.system_identifier != ControlFile_source.system_identifier)
